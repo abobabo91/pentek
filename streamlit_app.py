@@ -7,7 +7,6 @@ import streamlit as st
 from openai import OpenAI
 import PyPDF2
 
-
 # =========================
 # ----- Streamlit UI  -----
 # =========================
@@ -30,8 +29,7 @@ if not api_key:
     st.error("Missing OpenAI API key. Put it in st.secrets['openai']['OPENAI_API_KEY'] or the OPENAI_API_KEY environment variable.")
     st.stop()
 
-client = OpenAI(api_key=api_key)
-
+client = OpenAI(api_key=api_key, timeout=3600)
 
 # =========================
 # -------- Helpers --------
@@ -41,12 +39,13 @@ MODEL_CHOICES = [
     "gpt-5-nano",
     "gpt-4o",
     "gpt-4o-mini",
+    "o3-deep-research",
+    "o4-mini-deep-research",
 ]
 DEFAULT_MODEL = "gpt-5-nano"
 
-# --- sanitize wrappers from model output (SDK annotations, zero-width, etc.) ---
-_CITE_WRAP_RE = re.compile(r"\ue200.*?\ue201", flags=re.DOTALL)  # internal cite wrappers
-_TURN_FILE_RE = re.compile(r"\[turn\d+file\d+\]")                # internal file ids
+_CITE_WRAP_RE = re.compile(r"\ue200.*?\ue201", flags=re.DOTALL)
+_TURN_FILE_RE = re.compile(r"\[turn\d+file\d+\]")
 _ZERO_WIDTH = dict.fromkeys(map(ord, "\u200b\u200c\u200d\u2060"), None)
 
 def sanitize_text(s: str) -> str:
@@ -60,8 +59,6 @@ def sanitize_text(s: str) -> str:
 def base_system_instructions() -> str:
     return (
         "You are a startup due diligence assistant.\n"
-        "Use BOTH the uploaded PDF text AND the web (via web_search) as needed.\n"
-        "Always include inline numeric citations like [1], [2] directly in the text where you use evidence.\n"
         "Always end with a 'References:' section listing sources in order of appearance.\n"
         "For files: include the filename + a short quote.\n"
         "For web: include the page title + full URL.\n"
@@ -71,33 +68,23 @@ def base_system_instructions() -> str:
 def one_pager_prompt(file_text: str) -> str:
     return (
         "Write a very concise one-pager (max 200 words) from the uploaded documents.\n"
-        "Format output in clean Markdown with clear section headers.\n"
-        "Sections: 1) Problem & solution, 2) Core technology, 3) Traction & business model, 4) Risks.\n"
+        "Format output in Markdown with clear section headers:\n"
+        "1) Problem & solution, 2) Core technology, 3) Traction & business model, 4) Risks.\n"
         f"Uploaded document content:\n{file_text[:8000]}"
     )
-
 
 def claims_and_validation_prompt(file_text: str) -> str:
     return (
-        "Task: Extract the startup’s TECHNOLOGY CLAIMS from the uploaded files, then validate each claim by running multiple web searches.\n"
+        "Task: Extract the startup’s TECHNOLOGY CLAIMS from the uploaded files, then validate each claim with deep web searches.\n"
         "Output at least 5 technology claims.\n"
-        "For EACH claim, perform deep web searches (company site, docs, press, benchmarks, patents, papers, GitHub, credible media/industry sources).\n"
-        "For EACH claim, you MUST run at least one (but preferably 2-3) distinct web_search query. When searching keep the scope of the company.\n"
-        "For EACH claim, use at least 3 citations from the searches.\n"
+        "Focus on the feasibility of the technological claims and the scientific and industrial research literature.\n"
         "Output format:\n"
-        "A) List of extracted technology claims (numbered, short, precise, one per line).\n"
-        "Summarize the best evidence you find and critically assess. Cite files inline.\n"
-        "B) Validation table (one row per claim): {Claim} | {Assessment: Supported / Plausible but unverified / Questionable or contradicts} | {Key Evidence (1-3 bullets)}\n"
-        "C) Executive summary of the validation results in max 150 words.\n\n"
-        "Important:\n"
-        "-Use inline link citations for every evidence-based sentence and end with References.\n"
-        "-Only cite the websearch results not the original document.\n"
-        "-Format output in clean Markdown with headings and a compact table.\n"
+        "A) List of extracted claims (numbered)\n"
+        "B) Validation table: {Claim} | {Assessment} | {Key Evidence} (Markdown table)\n"
+        "C) Executive summary (max 150 words).\n"
+        "Format output in Markdown with clear section headers and tables.\n\n"
         f"Uploaded document content:\n{file_text[:8000]}"
     )
-
-
-
 
 def extract_pdf_text(uploaded_files) -> str:
     text_chunks = []
@@ -109,43 +96,6 @@ def extract_pdf_text(uploaded_files) -> str:
         except Exception as e:
             st.warning(f"Could not read {f.name}: {e}")
     return "\n".join(text_chunks)
-
-
-def extract_sources_and_quotes(final_response) -> Tuple[List[Dict[str, str]], List[Dict[str, str]]]:
-    """
-    Extracts:
-      - web_sources: list of {title, url, snippet?}
-      - file_quotes: list of {filename, quote}
-    """
-    web_sources: List[Dict[str, str]] = []
-    file_quotes: List[Dict[str, str]] = []
-    try:
-        for block in getattr(final_response, "output", []) or []:
-            if getattr(block, "type", "") == "output_text":
-                anns = getattr(block, "annotations", None) or []
-                for a in anns:
-                    if not isinstance(a, dict):
-                        continue
-                    if a.get("type") == "web_citation":
-                        web_sources.append({
-                            "title": a.get("title") or "Source",
-                            "url": a.get("url") or "",
-                            "snippet": a.get("snippet") or ""
-                        })
-    except Exception:
-        pass
-
-    # Deduplicate
-    seen_urls = set()
-    dedup_web = []
-    for s in web_sources:
-        u = s.get("url", "")
-        if u and u not in seen_urls:
-            dedup_web.append(s)
-            seen_urls.add(u)
-
-    return dedup_web[:20], file_quotes
-
 
 def ensure_references_section(answer_text: str, files_list: List[Dict[str, str]], web_list: List[Dict[str, str]]) -> str:
     refs_lines = []
@@ -170,14 +120,30 @@ def ensure_references_section(answer_text: str, files_list: List[Dict[str, str]]
             return answer_text + "\n\n**References:**\n" + "\n".join(refs_lines)
     return answer_text
 
+# =========================
+# --- Core Response Logic --
+# =========================
 
-def run_streamed_response(model: str, messages: List[Dict[str, str]], tools: List[Dict[str, Any]]):
+def run_response(model: str, messages: List[Dict[str, str]]):
+    # Deep Research models
+    if model in ("o3-deep-research", "o4-mini-deep-research"):
+        resp = client.responses.create(
+            model=model,
+            input=messages,
+            background=False,  # could set True for async background jobs
+            tools=[
+                {"type": "web_search_preview"},
+                # optionally add file_search or code_interpreter here
+            ],
+        )
+        return sanitize_text(resp.output_text), resp
+    # Standard GPT models with streaming
     streamed_text = ""
     final_response_obj = None
     with client.responses.stream(
         model=model,
         input=messages,
-        tools=tools
+        tools=[{"type": "web_search"}]
     ) as stream:
         for event in stream:
             if event.type == "response.output_text.delta":
@@ -186,22 +152,18 @@ def run_streamed_response(model: str, messages: List[Dict[str, str]], tools: Lis
         final_response_obj = stream.get_final_response()
     return sanitize_text(streamed_text), final_response_obj
 
-
 # =========================
 # ---- Session State -------
 # =========================
 
 if "chat_history" not in st.session_state:
     st.session_state.chat_history = []
-
 if "uploaded_text" not in st.session_state:
     st.session_state.uploaded_text = ""
-
 if "dd_onepager" not in st.session_state:
     st.session_state.dd_onepager = None
 if "dd_validation" not in st.session_state:
     st.session_state.dd_validation = None
-
 
 # =========================
 # ---- Upload & Controls ---
@@ -222,37 +184,35 @@ if uploaded_files:
 
 dd_clicked = st.button("🧪 Run Due Diligence", type="primary", disabled=not st.session_state.uploaded_text)
 
-
 # =========================
 # ---- Due Diligence Flow --
 # =========================
 
-def run_due_diligence_onepager(model: str, file_text: str):
+def run_due_diligence_onepager(file_text: str):
+    # Force GPT-5 for one-pager
+    model = "gpt-5-nano"   # or "gpt-5" if available in your org
     messages = [
         {"role": "system", "content": base_system_instructions()},
         {"role": "user", "content": one_pager_prompt(file_text)}
     ]
-    text, resp_obj = run_streamed_response(model, messages, tools=[{"type": "web_search"}])
-    web_sources, file_quotes = extract_sources_and_quotes(resp_obj)
-    final_text = ensure_references_section(text, file_quotes, web_sources)
-    return final_text
+    text, resp_obj = run_response(model, messages)
+    return text
+
+
 
 def run_due_diligence_validation(model: str, file_text: str):
     messages = [
         {"role": "system", "content": base_system_instructions()},
         {"role": "user", "content": claims_and_validation_prompt(file_text)}
     ]
-    text, resp_obj = run_streamed_response(model, messages, tools=[{"type": "web_search"}])
-    web_sources, file_quotes = extract_sources_and_quotes(resp_obj)
-    final_text = ensure_references_section(text, file_quotes, web_sources)
-    return final_text
-
+    text, resp_obj = run_response(model, messages)
+    return text
 
 if dd_clicked:
     st.subheader("📄 One-pager from Documents")
     with st.spinner("Summarizing uploaded materials..."):
         try:
-            st.session_state.dd_onepager = run_due_diligence_onepager(model_choice, st.session_state.uploaded_text)
+            st.session_state.dd_onepager = run_due_diligence_onepager(st.session_state.uploaded_text)
             st.markdown(st.session_state.dd_onepager)
         except Exception as e:
             st.error(f"One-pager error: {e}")
@@ -267,8 +227,6 @@ if dd_clicked:
         except Exception as e:
             st.error(f"Validation error: {e}")
 
-
-
 if st.session_state.dd_onepager and not dd_clicked:
     with st.expander("📄 Last One-pager from Documents", expanded=False):
         st.markdown(st.session_state.dd_onepager)
@@ -276,7 +234,6 @@ if st.session_state.dd_onepager and not dd_clicked:
 if st.session_state.dd_validation and not dd_clicked:
     with st.expander("🔍 Last Claims & Validation One-pager", expanded=False):
         st.markdown(st.session_state.dd_validation)
-
 
 # =========================
 # ---- Chat History --------
@@ -300,14 +257,8 @@ if user_input:
             messages = [{"role": "system", "content": base_system_instructions()}] + st.session_state.chat_history
             if st.session_state.uploaded_text:
                 messages.append({"role": "system", "content": f"Uploaded document content:\n{st.session_state.uploaded_text[:8000]}"})
-            text, resp_obj = run_streamed_response(
-                model_choice,
-                messages=messages,
-                tools=[{"type": "web_search"}]
-            )
-            web_sources, file_quotes = extract_sources_and_quotes(resp_obj)
-            final_with_refs = ensure_references_section(text, file_quotes, web_sources)
-            bubble.markdown(final_with_refs)
-            st.session_state.chat_history.append({"role": "assistant", "content": final_with_refs})
+            text, resp_obj = run_response(model_choice, messages)
+            bubble.markdown(text)
+            st.session_state.chat_history.append({"role": "assistant", "content": text})
         except Exception as e:
             bubble.error(f"Error: {e}")
