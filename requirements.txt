@@ -1,2 +1,11 @@
-openai
 streamlit
+pandas
+PyPDF2
+pdf2image
+pytesseract
+Pillow
+openai
+python-docx
+beautifulsoup4
+lxml
+xlsxwriter
