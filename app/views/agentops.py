@@ -1,16 +1,16 @@
 """
-AgentOps view: operations UI for inbound processing, manual uploads, and export.
+AgentWorkspace view: operations UI for inbound processing, manual uploads, and export.
 """
 
 import streamlit as st
 
 
 def render_agentops() -> None:
-    # Sidebar: choose AgentOps sub-page
+    # Sidebar: choose AgentWorkspace sub-page
     with st.sidebar:
-        view = st.selectbox("AgentOps View", ["Automatic", "Manual Upload"], index=0, key="agentops_view")
+        view = st.selectbox("AgentWorkspace View", ["Automatic", "Manual Upload"], index=0, key="agentops_view")
 
-    st.header(f"⚙️ AgentOps – {view}")
+    st.header(f"⚙️ AgentWorkspace – {view}")
 
     if view == "Automatic":
         st.markdown("## 📥 Automatic Inbox")

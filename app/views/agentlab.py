@@ -9,10 +9,8 @@ import streamlit as st
 from app.views.cards import (
     render_thesis_card,
     render_triggers_card,
-    render_source_card,
-    render_extraction_card,
-    render_datasources_card,
     render_output_settings_card,
+    render_datasources_card,
 )
 
 
@@ -27,7 +25,7 @@ def render_agentlab(client: Optional[Any]) -> None:
     st.header(f"🧪 {title}")
 
     # Left-right layout: left = Workstreams, right = details/forms
-    col_left, col_right = st.columns([2, 3], gap="large")
+    col_left, col_right = st.columns([2, 5], gap="large")
 
     with col_left:
         _render_left_panel()
@@ -159,19 +157,52 @@ def render_new_workstream_form() -> None:
 
 def render_workstream_detail(name: str, client: Optional[Any]) -> None:
     st.markdown(f"### ⚙️ Configure Workstream: **{name}**")
-    st.caption("This is a reusable configuration. Once set, you can run it in AgentOps.")
+
+    # Initialize session state for rename input visibility
+    if f"show_rename_input_{name}" not in st.session_state:
+        st.session_state[f"show_rename_input_{name}"] = False
+
+    if st.session_state[f"show_rename_input_{name}"]:
+        col1, col2, col3 = st.columns([3, 1, 1])
+        with col1:
+            new_name = st.text_input("Rename Workstream", value=name, key=f"rename_input_{name}")
+        with col2:
+            st.markdown("<div style='height: 28px;'></div>", unsafe_allow_html=True) # Adjust height as needed
+            if st.button("Rename", key=f"rename_button_confirm_{name}", use_container_width=True):
+                if not new_name.strip():
+                    st.error("Workstream name cannot be empty.")
+                elif new_name == name:
+                    st.info("New name is the same as the current name.")
+                elif new_name in st.session_state.inbound_workstreams:
+                    st.error(f"Workstream '{new_name}' already exists. Please choose a different name.")
+                else:
+                    old_workstream_config = st.session_state.inbound_workstreams[name]
+                    del st.session_state.inbound_workstreams[name]
+                    st.session_state.inbound_workstreams[new_name] = old_workstream_config
+                    st.session_state.current_workstream = new_name
+                    st.session_state[f"show_rename_input_{name}"] = False # Hide input after renaming
+                    st.success(f"Workstream renamed to '{new_name}'.")
+                    st.experimental_rerun()
+        with col3:
+            st.markdown("<div style='height: 28px;'></div>", unsafe_allow_html=True) # Adjust height as needed
+            if st.button("Cancel", key=f"rename_button_cancel_{name}", use_container_width=True):
+                st.session_state[f"show_rename_input_{name}"] = False
+                st.experimental_rerun()
+    else:
+        if st.button("Rename Workstream", key=f"rename_button_show_{name}"):
+            st.session_state[f"show_rename_input_{name}"] = True
+            st.experimental_rerun()
+    
+    st.caption("This is a reusable configuration. Once set, you can run it in AgentWorkspace.")
 
     tabs = st.tabs(
         [
             "1. Investment Thesis",
             "2. Triggers",
-            "3. Source",
-            "4. What to Look For",
-            "5. Data Sources",
-            "6. Output Settings",
+            "3. Output Settings",
+            "4. Data Sources",
         ]
     )
-
     with tabs[0]:
         render_thesis_card(client)
 
@@ -179,13 +210,7 @@ def render_workstream_detail(name: str, client: Optional[Any]) -> None:
         render_triggers_card()
 
     with tabs[2]:
-        render_source_card()
+        render_output_settings_card()
 
     with tabs[3]:
-        render_extraction_card()
-
-    with tabs[4]:
         render_datasources_card()
-
-    with tabs[5]:
-        render_output_settings_card()

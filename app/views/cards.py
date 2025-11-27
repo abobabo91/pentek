@@ -14,7 +14,7 @@ from app.services import parse_investment_thesis
 # -------------------------
 
 def render_thesis_card(client: Optional[Any]) -> None:
-    st.subheader("DEFINE INVESTMENT THESIS")
+    st.subheader("1. Define Investment Thesis")
     st.write("Describe your fund’s investment logic. AI will extract and structure it into thesis components automatically.")
 
     # Initialize structured thesis state if missing
@@ -35,7 +35,18 @@ def render_thesis_card(client: Optional[Any]) -> None:
             },
             "flags": ["Flag if MRR < €20k", "Flag if hardware-intensive", "Flag if founder not technical"],
             "rejects": ["Reject if outside CEE", "Reject if no revenue (for Seed+)"],
+            "tactical_focus": "",
             "notes": "We prefer founder-led companies, avoid government-heavy sectors.",
+            "financial_metrics": {
+                "revenue_metrics": "N/A",
+                "ebitda": "N/A",
+                "arr": 0,
+                "growth": 0,
+                "ltv_cac_ratio": 0.0,
+                "gross_margin": 0,
+                "profitable": False,
+                "retention": 0,
+            },
         }
 
     thesis = st.session_state.thesis_struct
@@ -57,9 +68,9 @@ def render_thesis_card(client: Optional[Any]) -> None:
     c1, c2 = st.columns(2)
     with c1:
         if st.button("Suggest Thesis Elements"):
-            st.info("Template suggestions not implemented yet. Use Parse Automatically.")
+            st.info("Template suggestions not implemented yet. Use Convert.")
     with c2:
-        if st.button("Parse Automatically"):
+        if st.button("Convert"):
             if not thesis_text.strip():
                 st.error("Please enter a thesis description before parsing.")
             else:
@@ -70,7 +81,7 @@ def render_thesis_card(client: Optional[Any]) -> None:
                 st.success("Thesis parsed and populated.")
 
     st.markdown("---")
-    st.subheader("🧠 AI-EXTRACTED THESIS COMPONENTS (Editable)")
+    st.subheader("🧠 AI-Extracted Thesis Components (Editable)")
 
     # 1) Sector Focus
     st.markdown("##### 🎯 Sector Focus")
@@ -82,7 +93,7 @@ def render_thesis_card(client: Optional[Any]) -> None:
         st.caption("Suggested: " + ", ".join(suggested_only))
     row = st.columns([4, 1])
     with row[0]:
-        new_sector = st.text_input("", key="add_sector_input", placeholder="Add custom sector", label_visibility="collapsed")
+        new_sector = st.text_input("Add custom sector", key="add_sector_input", placeholder="Add custom sector", label_visibility="collapsed")
     with row[1]:
         if st.button("Add Sector", key="add_sector_btn"):
             val = new_sector.strip()
@@ -100,7 +111,7 @@ def render_thesis_card(client: Optional[Any]) -> None:
         st.caption("Suggested: " + ", ".join(suggested_geo))
     row = st.columns([4, 1])
     with row[0]:
-        new_geo = st.text_input("", key="add_geo_input", placeholder="Add custom region", label_visibility="collapsed")
+        new_geo = st.text_input("Add custom region", key="add_geo_input", placeholder="Add custom region", label_visibility="collapsed")
     with row[1]:
         if st.button("Add Region", key="add_geo_btn"):
             val = new_geo.strip()
@@ -119,7 +130,7 @@ def render_thesis_card(client: Optional[Any]) -> None:
         st.caption("Suggested: " + ", ".join(suggested_stages))
     row = st.columns([4, 1])
     with row[0]:
-        add_stage = st.text_input("", key="add_stage_input", placeholder="Add custom stage", label_visibility="collapsed")
+        add_stage = st.text_input("Add custom stage", key="add_stage_input", placeholder="Add custom stage", label_visibility="collapsed")
     with row[1]:
         if st.button("Add Stage", key="add_stage_btn"):
             val = add_stage.strip()
@@ -132,11 +143,171 @@ def render_thesis_card(client: Optional[Any]) -> None:
     current_min = int(thesis.get("ticket_min", 300_000))
     current_max = int(thesis.get("ticket_max", 2_000_000))
     slider_max = max(2_000_000, int(current_max * 2.0))
-    t_min, t_max = st.slider("Ticket Size (€)", 0, slider_max, (current_min, current_max), step=50_000, format="%d")
+    t_min, t_max = st.slider("Ticket Size (€)", 0, slider_max, (current_min, current_max), step=50_000, format="%d", key="thesis_ticket_size")
     thesis["ticket_min"], thesis["ticket_max"] = int(t_min), int(t_max)
 
     st.markdown("---")
-    # 5) Scoring Weights
+    # 5) Traction & Metrics (range sliders with adjustable endpoints)
+    st.markdown("##### 📊 Traction & Metrics")
+
+    # Initialize unified metrics structure with defaults and include Ticket Size
+    if "metrics" not in thesis:
+        tmin = int(thesis.get("ticket_min", 300_000))
+        tmax = int(thesis.get("ticket_max", 2_000_000))
+        ticket_domain = max(2_000_000, int(tmax * 2.0))
+        thesis["metrics"] = {
+            "Revenue (€)": {"domain_max": 5_000_000, "range": (0, 1_000_000), "step": 50_000, "type": "int"},
+            "EBITDA (€)": {"domain_max": 2_000_000, "range": (0, 500_000), "step": 50_000, "type": "int"},
+            "ARR (€)": {"domain_max": 5_000_000, "range": (0, 1_000_000), "step": 100_000, "type": "int"},
+            "Growth (%)": {"domain_max": 300, "range": (0, 100), "step": 1, "type": "int"},
+            "LTV : CAC (x)": {"domain_max": 10.0, "range": (0.0, 3.0), "step": 0.1, "type": "float"},
+            "Gross Margin (%)": {"domain_max": 100, "range": (0, 60), "step": 1, "type": "int"},
+        }
+
+    metrics = thesis.get("metrics", {})
+
+    # Keep Ticket Size metric synced with top-level ticket_min/ticket_max each render
+    if "Ticket Size (€)" in metrics:
+        cur_tmin = int(thesis.get("ticket_min", 300_000))
+        cur_tmax = int(thesis.get("ticket_max", 2_000_000))
+        metrics["Ticket Size (€)"]["domain_max"] = max(2_000_000, int(cur_tmax * 2.0))
+        metrics["Ticket Size (€)"]["range"] = (cur_tmin, cur_tmax)
+
+    # Suggested defaults not yet present
+    metric_suggestions = [
+        "Revenue (€)", "EBITDA (€)", "ARR (€)", "Growth (%)",
+        "LTV : CAC (x)", "Gross Margin (%)", "Retention (%)", "MRR (%)", "Churn (%)"
+    ]
+
+
+    # Helper to create safe Streamlit keys
+    def _keyify(label: str) -> str:
+        return "".join(ch if ch.isalnum() else "_" for ch in label).lower()
+
+    # Render metric controls in three columns
+    names = list(metrics.keys())
+    cols = st.columns(3)
+    for idx, name in enumerate(names):
+        cfg = metrics[name]
+        is_float = cfg.get("type") == "float"
+        col = cols[idx % 3]
+        with col:
+            if is_float:
+                dom_max = float(cfg.get("domain_max", 100.0))
+                cur_min, cur_max = cfg.get("range", (0.0, float(dom_max)))
+                cur_min = float(cur_min)
+                cur_max = min(float(cur_max), float(dom_max))
+                new_min, new_max = st.slider(
+                    name,
+                    min_value=0.0,
+                    max_value=float(dom_max),
+                    value=(float(cur_min), float(cur_max)),
+                    step=float(cfg.get("step", 0.1)),
+                    key=f"{_keyify(name)}_slider_float",
+                )
+                # Auto-expand max if user reaches the cap; keeps UI as slider-only
+                if float(new_max) >= float(dom_max):
+                    metrics[name]["domain_max"] = float(dom_max * 2.0)
+                else:
+                    metrics[name]["domain_max"] = float(dom_max)
+                metrics[name]["range"] = (float(new_min), float(new_max))
+            else:
+                dom_max = int(cfg.get("domain_max", 100))
+                cur_min, cur_max = cfg.get("range", (0, int(dom_max)))
+                cur_min = int(cur_min)
+                cur_max = min(int(cur_max), int(dom_max))
+                new_min, new_max = st.slider(
+                    name,
+                    min_value=0,
+                    max_value=int(dom_max),
+                    value=(int(cur_min), int(cur_max)),
+                    step=int(cfg.get("step", 1)),
+                    key=f"{_keyify(name)}_slider_int",
+                    format="%d" if "€" in name else None,
+                )
+                # Auto-expand max if user reaches the cap; keeps UI as slider-only
+                if int(new_max) >= int(dom_max):
+                    metrics[name]["domain_max"] = int(dom_max * 2)
+                else:
+                    metrics[name]["domain_max"] = int(dom_max)
+                metrics[name]["range"] = (int(new_min), int(new_max))
+
+            # Keep Ticket Size in sync with top-level ticket_min/ticket_max
+            if name == "Ticket Size (€)":
+                thesis["ticket_min"], thesis["ticket_max"] = int(metrics[name]["range"][0]), int(metrics[name]["range"][1])
+
+    # Add a custom metric
+    st.markdown("---")
+    st.markdown("##### Add Custom Metric")
+
+    missing_suggestions = [m for m in metric_suggestions if m not in metrics]
+    if missing_suggestions:
+        st.caption("Suggested: " + ", ".join(missing_suggestions))
+
+    col_add_input, col_add_btn = st.columns([4, 1])
+    with col_add_input:
+        new_metric_input = st.text_input(
+            "",
+            key="add_metric_input",
+            placeholder="Add new metric (Name;Max Value;Sign, e.g., 'Retention;100;%')",
+            label_visibility="collapsed" # Added to prevent double label, aligning better with the button
+        )
+    with col_add_btn:
+        # Custom CSS to align the button vertically with the text input
+        
+        if st.button("Add Metric", key="add_metric_btn"):
+            parts = [p.strip() for p in new_metric_input.split(';')]
+            if len(parts) == 3:
+                name, max_val_str, sign = parts
+                try:
+                    max_val = float(max_val_str)
+                    if name and f"{name} ({sign})" not in metrics:
+                        metric_type = "float" if "." in max_val_str else "int"
+                        metrics[f"{name} ({sign})"] = {
+                            "domain_max": max_val,
+                            "range": (0.0 if metric_type == "float" else 0, max_val),
+                            "step": 0.1 if metric_type == "float" else 1,
+                            "type": metric_type,
+                        }
+                        st.success(f"Metric '{name} ({sign})' added.")
+                    else:
+                        st.warning("Metric already exists or name is empty.")
+                except ValueError:
+                    st.error("Max Value must be a number.")
+            else:
+                st.error("Please use format: Name;Max Value;Sign (e.g., 'Retention;100;%')")
+
+    # Remove custom metrics
+    st.markdown("---")
+    st.markdown("##### Remove Metrics")
+    default_metrics = [
+        
+    ]
+    custom_metrics = [name for name in metrics.keys() if name not in default_metrics]
+
+    if custom_metrics:
+        col_select, col_button = st.columns([4, 1])
+        with col_select:
+            metric_to_remove = st.selectbox(
+                "Select metric to remove",
+                [""] + custom_metrics,
+                key="remove_metric_selectbox",
+                label_visibility="collapsed" # Hide label to save space
+            )
+        with col_button:
+            if st.button("Remove Metric", key="remove_metric_btn") and metric_to_remove:
+                del metrics[metric_to_remove]
+                st.success(f"Metric '{metric_to_remove}' removed.")
+                # Force a rerun to update the display immediately
+                st.experimental_rerun()
+    else:
+        st.info("No custom metrics to remove.")
+
+    # Persist metrics back onto thesis
+    thesis["metrics"] = metrics
+
+    st.markdown("---")
+    # 6) Scoring Weights
     st.markdown("##### ⚖️ Scoring Weights (How much each dimension matters?)")
     s = thesis.get("scoring", {})
     cs1, cs2, cs3 = st.columns(3)
@@ -144,7 +315,7 @@ def render_thesis_card(client: Optional[Any]) -> None:
         s["team_quality"] = st.slider("Team Quality", 0, 10, int(s.get("team_quality", 9)))
         s["tech_readiness"] = st.slider("Tech Readiness", 0, 10, int(s.get("tech_readiness", 8)))
     with cs2:
-        s["market_size"] = st.slider("Market Size", 0, 10, int(s.get("market_size", 9)))
+        s["market_size"] = st.slider("Market", 0, 10, int(s.get("market_size", 9)))
         s["geography_fit"] = st.slider("Geography Fit", 0, 10, int(s.get("geography_fit", 10)))
     with cs3:
         s["traction"] = st.slider("Traction", 0, 10, int(s.get("traction", 5)))
@@ -153,46 +324,62 @@ def render_thesis_card(client: Optional[Any]) -> None:
 
     st.markdown("---")
     # 6) Auto-Flag / Auto-Reject Rules
-    st.markdown("##### 🚨 Auto-Flag / Auto-Reject Rules (AI suggested from your text)")
+    st.markdown("##### 🚨 Auto-Flag Rules (AI suggested from your text)")
     flags = thesis.get("flags", [])
-    rejects = thesis.get("rejects", [])
 
-    fl_col, rj_col = st.columns(2)
-    with fl_col:
-        flag_suggestions = ["Flag if MRR < €20k", "Flag if hardware-intensive", "Flag if founder not technical"]
-        cur = set(flags)
-        flag_options = sorted(cur.union(flag_suggestions))
-        updated_flags = []
-        for opt in flag_options:
-            checked = st.checkbox(opt, value=(opt in cur), key=f"flag_chk_{opt}")
-            if checked:
-                updated_flags.append(opt)
-        new_flag = st.text_input("Add custom flag rule", key="add_flag_input")
+    flag_suggestions = ["Flag if MRR < €20k", "Flag if hardware-intensive", "Flag if founder not technical"]
+    cur = set(flags)
+    flag_options = sorted(cur.union(flag_suggestions))
+    updated_flags = []
+    for opt in flag_options:
+        checked = st.checkbox(opt, value=(opt in cur), key=f"flag_chk_{opt}")
+        if checked:
+            updated_flags.append(opt)
+    row_flag_input = st.columns([4, 1])
+    with row_flag_input[0]:
+        new_flag = st.text_input("Add custom flag rule", key="add_flag_input", label_visibility="collapsed")
+    with row_flag_input[1]:
         if st.button("Add Flag", key="add_flag_btn"):
             val = new_flag.strip()
             if val and val not in updated_flags:
                 updated_flags.append(val)
-        thesis["flags"] = updated_flags
+    thesis["flags"] = updated_flags
 
-    with rj_col:
-        reject_suggestions = ["Reject if outside CEE", "Reject if no revenue (for Seed+)"]
-        cur_r = set(rejects)
-        reject_options = sorted(cur_r.union(reject_suggestions))
-        updated_rejects = []
-        for opt in reject_options:
-            checked = st.checkbox(opt, value=(opt in cur_r), key=f"reject_chk_{opt}")
-            if checked:
-                updated_rejects.append(opt)
-        new_reject = st.text_input("Add custom reject rule", key="add_reject_input")
+    st.markdown("##### 🚫 Auto-Reject Rules (AI suggested from your text)")
+    rejects = thesis.get("rejects", [])
+
+    reject_suggestions = ["Reject if outside CEE", "Reject if no revenue (for Seed+)"]
+    cur_r = set(rejects)
+    reject_options = sorted(cur_r.union(reject_suggestions))
+    updated_rejects = []
+    for opt in reject_options:
+        checked = st.checkbox(opt, value=(opt in cur_r), key=f"reject_chk_{opt}")
+        if checked:
+            updated_rejects.append(opt)
+    
+    row_reject_input = st.columns([4, 1])
+    with row_reject_input[0]:
+        new_reject = st.text_input("Add custom reject rule", key="add_reject_input", label_visibility="collapsed")
+    with row_reject_input[1]:
         if st.button("Add Reject", key="add_reject_btn"):
             val = new_reject.strip()
             if val and val not in updated_rejects:
                 updated_rejects.append(val)
-        thesis["rejects"] = updated_rejects
+    thesis["rejects"] = updated_rejects
 
 
     st.markdown("---")
-    # 7) Additional Notes
+    # 7) Tactical Focus
+    st.markdown("##### 🎯 Tactical Focus (Optional)")
+    thesis["tactical_focus"] = st.text_area(
+        "Short-term priorities driven by macro trends, market cycles, or the fund’s deployment phase.",
+        value=thesis.get("tactical_focus", ""),
+        height=80,
+        key="thesis_tactical_focus",
+    )
+
+    st.markdown("---")
+    # 8) Additional Notes
     st.markdown("##### 🧠 Additional Notes (Optional)")
     thesis["notes"] = st.text_area("Additional notes", value=thesis.get("notes", ""), height=80, key="thesis_notes")
 
@@ -204,7 +391,7 @@ def render_thesis_card(client: Optional[Any]) -> None:
             st.success("Structured thesis saved for this workstream (in memory).")
     with ctest:
         if st.button("🧪 Test Thesis on a Sample Deal"):
-            st.info("Sample deal testing will be implemented later in AgentOps / simulation view.")
+            st.info("Sample deal testing will be implemented later in AgentWorkspace / simulation view.")
 
 
 # -------------------------
@@ -213,13 +400,22 @@ def render_thesis_card(client: Optional[Any]) -> None:
 
 def render_triggers_card() -> None:
     st.subheader("2. Triggers – When Should the Agent Run?")
-    manual_run = st.checkbox("Manual running – when files uploaded", value=True)
+    trigger_type = st.selectbox(
+        "Choose Trigger Type",
+        ["Manual running – when files uploaded", "Automatic running"],
+        index=0, # Default to Manual
+        key="trigger_type_select"
+    )
 
-    st.markdown("##### Auto-run Settings")
-    auto_new_file = st.checkbox("Run analysis when new file detected", value=True)
-    auto_tag_company = st.checkbox("Auto-tag company name from email/filename", value=True)
-    only_business_hours = st.checkbox("Only analyze during business hours")
-    notify_partners = st.checkbox("Send notifications to Partners on new intake")
+    if trigger_type == "Automatic running":
+        st.markdown("##### Auto-run Settings")
+        auto_new_file = st.checkbox("Run analysis when new file detected", value=True)
+        auto_tag_company = st.checkbox("Auto-tag company name from email/filename", value=True)
+        monitor_shared_inbox = st.checkbox("Monitor shared inbox (e.g. deals@fund.com)", value=True)
+        monitor_dealroom = st.checkbox("Monitor Dealroom / Advisor feeds", value=True)
+        monitor_founder = st.checkbox("Monitor founder webform submissions", value=True)
+        only_business_hours = st.checkbox("Only analyze during business hours")
+        notify_partners = st.checkbox("Send notifications to Partners on new intake")
 
     st.markdown("##### Deal Routing")
     partner = st.selectbox("Assign to Partner", ["– None –", "Partner A", "Partner B", "Partner C"])
@@ -230,74 +426,152 @@ def render_triggers_card() -> None:
         st.success("Trigger settings saved (in memory).")
 
 
-# -------------------------
-# Card 3 – Source
-# -------------------------
-
-def render_source_card() -> None:
-    st.subheader("3. Source – Where Does the Inbound Come From?")
-    st.markdown("For manual flows, simply upload files. For auto-runs, connect your email or intake systems.")
-
-    st.markdown("##### Manual Uploads")
-    uploaded_files = st.file_uploader(
-        "Upload pitch decks, IMs, transcripts, Excel models, etc.",
-        accept_multiple_files=True,
-    )
-    if uploaded_files:
-        st.info(f"{len(uploaded_files)} file(s) uploaded. In AgentOps, this workstream will process these.")
-
-    st.markdown("##### Auto-run Settings (Intake Sources)")
-    st.checkbox("Monitor shared inbox (e.g. deals@fund.com)", value=True)
-    st.checkbox("Monitor Dealroom / Advisor feeds", value=True)
-    st.checkbox("Monitor founder webform submissions", value=True)
-
-    st.markdown("---")
-    if st.button("💾 Save Source Settings"):
-        st.success("Source settings saved (in memory).")
-
 
 # -------------------------
-# Card 4 – What to Look For
+# Card 3 – Output Settings
 # -------------------------
 
-def render_extraction_card() -> None:
-    st.subheader("4. What to Look For – Extraction Settings")
+def render_output_settings_card() -> None:
+    st.subheader("3. Output Settings – What Should the Agent Produce?")
 
     st.markdown("##### Extract From Pitch Deck")
-    col1, col2 = st.columns(2)
+    col1, col2, col3_pitch = st.columns(3)
     with col1:
         st.checkbox("Product Description", value=True)
         st.checkbox("Problem / Solution", value=True)
         st.checkbox("Team Slide", value=True)
+    with col2:
         st.checkbox("KPIs", value=True)
         st.checkbox("Go-to-Market", value=True)
-    with col2:
         st.checkbox("Tech Stack")
+    with col3_pitch:
         st.checkbox("Market Overview", value=True)
         st.checkbox("Competitive Landscape", value=True)
         st.checkbox("Customer Segments", value=True)
 
+    st.divider()
     st.markdown("##### Extract From Transcript")
-    col3, col4 = st.columns(2)
-    with col3:
+    col4, col5, col6_transcript = st.columns(3)
+    with col4:
         st.checkbox("Team Answers", value=True)
-        st.checkbox("Founder Signals (confidence, clarity, risk language)", value=True)
+        st.checkbox("Technical explanation depth")
+    with col5:
         st.checkbox("Revenue KPIs", value=True)
         st.checkbox("Red Flags", value=True)
-    with col4:
-        st.checkbox("Technical explanation depth")
+    with col6_transcript:
+        st.checkbox("Founder Signals (confidence, clarity, risk language)", value=True)
+
+
+    st.divider()
+
+    # Ensure settings exist (init_session_state sets this)
+    settings = st.session_state.get("output_settings", None)
+    if settings is None:
+        st.warning("Output Settings not initialized. Please reload the page.")
+        return
+
+    modules = settings.get("modules", {})
+    # Fallback to a sensible current module if needed
+    enabled_names = [n for n, m in modules.items() if m.get("enabled")]
+    if "current_output_module" not in st.session_state:
+        st.session_state.current_output_module = enabled_names[0] if enabled_names else (list(modules.keys())[0] if modules else None)
+
+    # Left: module checklist. Right: prompt editor that pops when a module is enabled.
+    col_left, col_right = st.columns([3, 5], gap="large")
+
+    with col_left:
+        st.markdown("##### 📄 Core Output Modules")
+        # Render checkboxes in a compact layout
+        for name, mod in modules.items():
+            prev = bool(mod.get("enabled", False))
+            cur = st.checkbox(name, value=prev, key=f"outmod_{name}")
+            if cur != prev:
+                modules[name]["enabled"] = cur
+                # If just enabled, make it the active module for editing
+                if cur:
+                    st.session_state.current_output_module = name
+
+
+
+    with col_right:
+        enabled_names = [n for n, m in modules.items() if m.get("enabled")]
+        if enabled_names:
+            current = st.session_state.get("current_output_module", enabled_names[0])
+            if current not in enabled_names:
+                current = enabled_names[0]
+            sel = st.selectbox("Editing module", enabled_names, index=enabled_names.index(current))
+            st.session_state.current_output_module = sel
+            st.caption("Tip: tick a module or select it here to edit its prompt on the right.")
+        else:
+            st.info("Enable at least one module to edit its prompt.")
+            
+        edit_name = st.session_state.get("current_output_module", None)
+        if edit_name and modules.get(edit_name, {}).get("enabled"):
+            st.markdown(f"##### ✏️ Prompt – {edit_name}")
+            prompt_key = f"prompt_editor_{edit_name}"
+            current_prompt = modules[edit_name].get("prompt", "")
+            # Editor
+            st.text_area(
+                "Edit the generation prompt for this module",
+                value=current_prompt,
+                height=280,
+                key=prompt_key,
+            )
+            # Buttons stacked to avoid multi-level nested columns
+            if st.button("Save Prompt", key=f"save_prompt_{edit_name}"):
+                modules[edit_name]["prompt"] = st.session_state.get(prompt_key, current_prompt)
+                st.success("Prompt saved.")
+            if st.button("Reset to Default", key=f"reset_prompt_{edit_name}"):
+                defaults = st.session_state.get("output_default_prompts", {})
+                default_text = defaults.get(edit_name, current_prompt)
+                modules[edit_name]["prompt"] = default_text
+                st.session_state[prompt_key] = default_text
+                st.info("Reset to default prompt.")
+        else:
+            st.info("Select a module on the left to edit its prompt.")
 
     st.markdown("---")
-    if st.button("💾 Save Extraction Settings"):
-        st.success("Extraction settings saved (in memory).")
+    st.markdown("##### 🧠 Claim vs Reality Validation")
+   
+    checks = settings["validation"].get("checks", {})
+    c1, c2 = st.columns(2)
+    items = list(checks.items())
+    for i, (label, val) in enumerate(items):
+        col = c1 if i % 2 == 0 else c2
+        with col:
+            checks[label] = st.checkbox(label, value=bool(val), key=f"validation_check_{label}")
+    settings["validation"]["checks"] = checks
+
+    st.markdown("##### 🏷️ Validation Labels")
+    labels = settings.get("labels", {})
+    descriptions = {
+        "Good": "Good – pith matches reality and thesis",
+        "Possible": "Possible – plausible but unverified",
+        "Question": "Question – unclear or contradictory",
+        "Bad": "Bad – contradicts data or violates thesis"
+    }
+    for i, lbl in enumerate(["Good", "Possible", "Question", "Bad"]):
+        labels[lbl] = st.checkbox(descriptions[lbl], value=bool(labels.get(lbl, True)), key=f"validation_label_{lbl}")
+    settings["labels"] = labels
+
+    st.markdown("##### 🔁 After Output Is Generated")
+    post = settings.get("post", {})
+    post["flags_red_yellow"] = st.checkbox("Flags (Red/Yellow)", value=bool(post.get("flags_red_yellow", False)))
+    settings["post"] = post
+
+    st.markdown("---")
+    if st.button("💾 Save Output Settings"):
+        # Persist back
+        st.session_state.output_settings = settings
+        st.success("Output settings saved (in memory).")
 
 
 # -------------------------
-# Card 5 – Data Sources
+# Card 4 – Data Sources
 # -------------------------
 
 def render_datasources_card() -> None:
-    st.subheader("5. Data Sources Configuration")
+    st.subheader("4. Data Sources Configuration")
     st.write(
         "Connect and configure external data providers the agent will use for market data, comps, competitors, team insights, news sentiment, and web intelligence."
     )
@@ -305,6 +579,7 @@ def render_datasources_card() -> None:
     st.markdown("##### 📊 Deal & Company Databases")
     col1, col2 = st.columns(2)
     with col1:
+        st.checkbox("Company Database", value=True)
         st.checkbox("Crunchbase", value=True)
         st.checkbox("PitchBook", value=True)
         st.checkbox("CB Insights")
@@ -317,6 +592,7 @@ def render_datasources_card() -> None:
     st.markdown("##### 🧠 Market & Trend Data")
     col3, col4 = st.columns(2)
     with col3:
+        st.checkbox("Company Database Market Data", value=True)
         st.checkbox("Statista")
         st.checkbox("Gartner")
         st.checkbox("IDC")
@@ -340,7 +616,6 @@ def render_datasources_card() -> None:
     st.markdown("Web Analysis Settings")
     col5, col6 = st.columns(2)
     with col5:
-        st.selectbox("Crawl depth", [1, 2, 3], index=1)
         st.text_input("Max runtime (seconds)", value="30")
     with col6:
         st.multiselect(
@@ -366,20 +641,6 @@ def render_datasources_card() -> None:
         st.checkbox("Bloomberg")
         st.text_input("Web Sentiment AI – keywords", value="lawsuit, regulatory, scandal")
 
-    st.markdown("##### 🎛️ Data Depth & Priority")
-    depth = st.radio("Depth", ["Light Scan (fast)", "Standard Scan (balanced)", "Deep Scan (slower)"], index=1)
-    st.text_area(
-        "Source Priority (1 = highest)",
-        value="1. PitchBook\n2. Crunchbase\n3. CapitalIQ\n4. Web Scraper\n5. LinkedIn",
-        height=100,
-    )
-
-    st.markdown("##### 🚨 Data Quality Rules")
-    st.checkbox("Cross-check metrics between databases", value=True)
-    st.checkbox("Flag inconsistent ARR / funding values", value=True)
-    st.checkbox("Discard unverified sources", value=True)
-    st.checkbox("Auto-note discrepancies in memo output")
-
     st.markdown("---")
     col_save, col_test = st.columns(2)
     with col_save:
@@ -388,77 +649,3 @@ def render_datasources_card() -> None:
     with col_test:
         if st.button("🧪 Run Test Scan on Sample Company"):
             st.info("Test scan simulation will be implemented later with live data integrations.")
-
-
-# -------------------------
-# Card 6 – Output Settings
-# -------------------------
-
-def render_output_settings_card() -> None:
-    st.subheader("6. Output Settings – What Should the Agent Produce?")
-
-    st.markdown("##### 📄 Core Outputs (Inbound Only)")
-    col1, col2 = st.columns(2)
-    with col1:
-        st.checkbox("1-page inbound summary", value=True)
-        st.checkbox("Investment thesis fit score (with explanation)", value=True)
-        st.checkbox("KPI extraction (Excel, PDF tables, screenshots, PPT text)", value=True)
-        st.checkbox("Red / yellow flags", value=True)
-    with col2:
-        st.checkbox("Suggested questions for next call", value=True)
-        st.checkbox("Management profile summary", value=True)
-        st.checkbox("Draft email to partner")
-        st.checkbox("Auto-create CRM note")
-
-    st.markdown("##### 🧠 Claim vs Reality Validation")
-    st.checkbox("Market claims vs. real market data", value=True)
-    st.checkbox("Growth claims vs. financials + benchmarks", value=True)
-    st.checkbox("Competition slide vs. actual competitors", value=True)
-    st.checkbox("Tech claims vs. stack, repos, team profiles", value=True)
-    st.checkbox("Traction claims vs. LinkedIn hiring, web traffic, funding databases", value=True)
-
-    st.markdown("Validation Output Format")
-    st.radio(
-        "Format",
-        [
-            "Show “Pitch says → Data says → Conclusion”",
-            "Only show mismatches",
-            "Only show validated claims",
-        ],
-        index=0,
-    )
-
-    st.markdown("Validation Labels (auto-generated)")
-    st.checkbox("Good — pitch matches reality + thesis", value=True)
-    st.checkbox("Possible — plausible but unverified", value=True)
-    st.checkbox("Question — unclear or contradictory", value=True)
-    st.checkbox("Bad — contradicts data or violates thesis", value=True)
-
-    st.markdown("##### 🗂 Supported Input Types")
-    col3, col4 = st.columns(2)
-    with col3:
-        st.checkbox("PDF (pitch decks, IMs)", value=True)
-        st.checkbox("PPT / PPTX (native slide parsing)", value=True)
-        st.checkbox("Excel (financial models, KPI tables)", value=True)
-    with col4:
-        st.checkbox("Images of slides (OCR)", value=True)
-        st.checkbox("Transcripts (calls, Zoom, emails)", value=True)
-        st.checkbox("Video pitch parsing (coming soon)")
-
-    st.markdown("##### 📑 Output Depth")
-    st.radio(
-        "Output depth",
-        ["Light – fit score + 3 bullets", "Standard – full inbound summary", "Deep – extended inbound memo (2–3 pages)"],
-        index=1,
-    )
-
-    st.markdown("##### 🔁 After Output Is Generated – Automations")
-    st.checkbox("Suggest scheduling a call", value=True)
-    st.checkbox("Notify partner automatically")
-    st.checkbox("Push summary to CRM draft")
-    st.checkbox("Auto-run Market Intelligence Agent")
-    st.checkbox("Auto-generate “Missing Information” list for founder")
-
-    st.markdown("---")
-    if st.button("💾 Save Output Settings"):
-        st.success("Output settings saved (in memory).")

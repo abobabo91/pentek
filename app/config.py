@@ -14,13 +14,13 @@ from typing import Optional, Any
 
 def setup_page() -> None:
     """Configure Streamlit page and title."""
-    st.set_page_config(page_title="AgentLab & AgentOps", layout="wide")
+    st.set_page_config(page_title="AgentLab & AgentWorkspace", layout="wide")
     st.title("🤖 AI Agent Workspace")
 
 
 def get_section() -> str:
     """Render sidebar navigation and return selected section."""
-    return st.sidebar.radio("Navigation", ["AgentLab", "AgentOps"])
+    return st.sidebar.radio("Navigation", ["AgentLab", "AgentWorkspace"])
 
 
 # -------------------------

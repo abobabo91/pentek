@@ -7,7 +7,7 @@ Refactor summary:
 - app/services.py: AI/service helpers (e.g., parse_investment_thesis)
 - app/views/cards.py: reusable UI cards
 - app/views/agentlab.py: AgentLab page
-- app/views/agentops.py: AgentOps page
+- app/views/agentops.py: AgentWorkspace page
 """
 
 from app.config import setup_page, get_section, get_client
@@ -28,7 +28,7 @@ def main() -> None:
     client = get_client(timeout=600)
 
     # Route to selected section
-    if section == "AgentOps":
+    if section == "AgentWorkspace":
         render_agentops()
     else:
         render_agentlab(client)
